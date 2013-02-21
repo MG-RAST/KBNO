@@ -23,41 +23,35 @@ parser.add_argument("-s", "--sec-group", dest="sec_group",
 
 args = parser.parse_args()
 
-## Find configuration file ##
-this_dir = os.path.abspath(__file__)
-top_dir  = os.path.abspath(this_dir + "/..")
-cfg_file = top_dir + "/config/config"
-cfg = ConfigParser.ConfigParser()
-if not os.path.exists(cfg_file):
-    print sys.stderr, "Could not find configuration"
-    sys.exit(1)
-cfg.read([cfg_file])
+def get_config():
+    top_dir  = os.path.abspath(
+        os.path.dirname(os.path.abspath(__file__)) + "/..")
+    cfg_file = os.path.abspath(top_dir + "/config/config")
+    cfg = ConfigParser.ConfigParser()
+    if not os.path.exists(cfg_file):
+        sys.stderr.write("Could not find configuration\n")
+        sys.exit(1)
+    cfg.read([cfg_file])
+    return cfg
 
-## Configuration Options ##
-shock_url = cfg.get("shock", "url")
-username = cfg.get("openstack", "username")
-password = cfg.get("openstack", "password")
-tenant   = cfg.get("openstack", "tenant_name")
-auth_url = cfg.get("openstack", "auth_url")
-vm_key_name = cfg.get("openstack", "vm_key_name")
-if not (shock_url and username and password and tenant and auth_url):
-    print sys.stderr, "Missing configuration in config file"
-    sys.exit(1)
-
+cfg = get_config()
 nova = client.Client(
-    username=username,
-    password=password,
-    tenant_name=tenant,
-    auth_url=auth_url, 
+    cfg.get("openstack", "username"),
+    cfg.get("openstack", "password"),
+    cfg.get("openstack", "tenant_name"),
+    cfg.get("openstack", "auth_url"), 
     insecure=True,
 )
+
 ## Validate that image and flavor exist ##
 os_image  = nova.images.get(args.image)
 os_flavor = nova.flavors.get(args.flavor)
 os_sec_group = nova.security_groups.get(args.sec_group)
+vm_key_name = cfg.get("openstack", "vm_key_name")
 os_key = nova.keypairs.get(vm_key_name)
 
 ## Generate startup script from template & options ##
+shock_url = cfg.get("shock", "url")
 template = string.Template(
 """\
 #!/bin/bash
@@ -96,7 +90,7 @@ daemonize -v -u $$gIPY_USER -c $SERVICE_DIR/notebook -p $SERVICE_DIR/service.pid
     -E PATH=$$gKB_BIN:$DEPLOY_DIR/bin:$PATH $IPY_PATH notebook --user=$IPY_USER --pylab=inline --no-browser --port=7051 \
     --ip='*' --ipython-dir=$$gSERVICE_DIR/ipython --notebook-dir=$SERVICE_DIR/notebook --NotebookApp.verbose_crash=True \
     --NotebookApp.notebook_manager_class='IPython.frontend.html.notebook.shocknbmanager.ShockNotebookManager' \
-    --ShockNotebookManager.shock_url=$$gSHOCK_URL --ShockNotebookManager.shock_user=$SHOCK_USER -c "${PRE_PYTHON}"
+    --ShockNotebookManager.shock_url=$$gSHOCK_URL --ShockNotebookManager.shock_user=$SHOCK_USER -c "${PRE_PYTHON}"\
 """)
 script = template.safe_substitute(user=args.user, shock_url=shock_url)
 script_file = tempfile.NamedTemporaryFile(delete=False)  
@@ -110,5 +104,3 @@ nova.servers.create(server_name, os_image, os_flavor,
     userdata=script_file.name,
     key_name=vm_key_name,
 )
-
-
